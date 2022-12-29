@@ -99,7 +99,7 @@ impl Address {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct Machine {
     mem: Vec<u16>,
     registers: Box<[u16; 8]>,
@@ -282,9 +282,9 @@ impl Machine {
         })
     }
 
-    fn read_stdin(&mut self) -> color_eyre::Result<u16> {
+    fn read_stdin(&mut self) -> color_eyre::Result<Option<u16>> {
         match self.stdin.pop_front() {
-            Some(raw) => Ok(raw as u16),
+            Some(raw) => Ok(Some(raw as u16)),
             None => {
                 let mut line = String::new();
 
@@ -295,11 +295,35 @@ impl Machine {
                     return Err(color_eyre::eyre::eyre!("stdin has reached EOF"));
                 }
 
-                self.stdin.extend(
-                    line.chars()
-                        .filter_map(|ch| (ch != '\r').then_some(ch as u8)),
-                );
-                self.read_stdin()
+                if line.starts_with("savestate") {
+                    let (_, filename) = line.split_once(' ').wrap_err("get filename")?;
+                    let filename = filename.trim();
+                    self.index -= 2;
+                    std::fs::write(
+                        filename,
+                        serde_json::to_string(self).wrap_err("serialize state")?,
+                    )
+                    .wrap_err("save state")?;
+                    std::process::exit(0);
+                } else if line.starts_with("loadstate") {
+                    let (_, filename) = line.split_once(' ').wrap_err("get filename")?;
+                    let filename = filename.trim();
+                    let deserialized = serde_json::from_str(
+                        &std::fs::read_to_string(filename).wrap_err("load state")?,
+                    )
+                    .wrap_err("deserialize state")?;
+                    *self = deserialized;
+                    for ch in b"look\n".iter().rev().copied() {
+                        self.stdin.push_front(ch);
+                    }
+                    return Ok(None);
+                } else {
+                    self.stdin.extend(
+                        line.chars()
+                            .filter_map(|ch| (ch != '\r').then_some(ch as u8)),
+                    );
+                    self.read_stdin()
+                }
             }
         }
     }
@@ -405,7 +429,10 @@ impl Machine {
                 Instruction::Out(literal) => self.write_stdout(literal.0),
                 Instruction::In(location) => {
                     let raw = self.read_stdin()?;
-                    self.write_to_location(location, raw)
+                    match raw {
+                        Some(raw) => self.write_to_location(location, raw),
+                        None => continue,
+                    }
                 }
                 Instruction::Noop => {}
             }
