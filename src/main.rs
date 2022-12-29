@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::{collections::VecDeque, fs::File, io::Write};
 
 use color_eyre::eyre::{Context, ContextCompat};
 
@@ -41,6 +41,12 @@ impl Register {
     }
 }
 
+impl std::fmt::Display for Register {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "r{}", self.0)
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 enum Value {
     Literal(Literal),
@@ -57,6 +63,15 @@ impl Value {
     }
 }
 
+impl std::fmt::Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Value::Literal(literal) => write!(f, "{literal}"),
+            Value::LiteralAtRegister(register) => write!(f, "{register}"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct Literal(u16);
 
@@ -67,6 +82,12 @@ impl Literal {
         } else {
             Err(color_eyre::eyre::eyre!("got weird literal: {literal}"))
         }
+    }
+}
+
+impl std::fmt::Display for Literal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:#x}", self.0)
     }
 }
 
@@ -86,6 +107,15 @@ impl Location {
     }
 }
 
+impl std::fmt::Display for Location {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Location::Address(address) => write!(f, "{address}"),
+            Location::Register(register) => write!(f, "{register}"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct Address(usize);
 
@@ -99,13 +129,21 @@ impl Address {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+impl std::fmt::Display for Address {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:#04x}", self.0)
+    }
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct Machine {
     mem: Vec<u16>,
     registers: Box<[u16; 8]>,
     stack: Vec<u16>,
     index: usize,
     stdin: VecDeque<u8>,
+    #[serde(skip)]
+    logger: Option<File>,
 }
 
 impl Machine {
@@ -125,6 +163,7 @@ impl Machine {
             stack: Vec::new(),
             index: 0,
             stdin: VecDeque::new(),
+            logger: None,
         }
     }
 
@@ -152,41 +191,63 @@ impl Machine {
     fn read_instruction(&mut self) -> color_eyre::Result<Instruction> {
         let opcode = self.read_mem();
         Ok(match opcode {
-            0 => Instruction::Halt,
+            0 => {
+                self.maybe_write_to_logger(format_args!("halt"), 1)?;
+
+                Instruction::Halt
+            }
             1 => {
                 let register = self.read_register()?;
                 let value = self.read_value()?;
                 let literal = self.eval_value(value)?;
+
+                self.maybe_write_to_logger(format_args!("set  {register} {value}"), 3)?;
+
                 Instruction::Set(register, literal)
             }
             2 => {
                 let value = self.read_value()?;
                 let literal = self.eval_value(value)?;
+
+                self.maybe_write_to_logger(format_args!("push {value}"), 2)?;
+
                 Instruction::Push(literal)
             }
             3 => {
                 let location = self.read_location()?;
+
+                self.maybe_write_to_logger(format_args!("pop  {location}"), 2)?;
+
                 Instruction::Pop(location)
             }
             4 => {
                 let location = self.read_location()?;
-                let left = self.read_value()?;
-                let left = self.eval_value(left)?;
-                let right = self.read_value()?;
-                let right = self.eval_value(right)?;
+                let leftv = self.read_value()?;
+                let left = self.eval_value(leftv)?;
+                let rightv = self.read_value()?;
+                let right = self.eval_value(rightv)?;
+
+                self.maybe_write_to_logger(format_args!("eq   {location} {leftv} {rightv}"), 4)?;
+
                 Instruction::Eq(location, left, right)
             }
             5 => {
                 let location = self.read_location()?;
-                let left = self.read_value()?;
-                let left = self.eval_value(left)?;
-                let right = self.read_value()?;
-                let right = self.eval_value(right)?;
+                let leftv = self.read_value()?;
+                let left = self.eval_value(leftv)?;
+                let rightv = self.read_value()?;
+                let right = self.eval_value(rightv)?;
+
+                self.maybe_write_to_logger(format_args!("gt   {location} {leftv} {rightv}"), 4)?;
+
                 Instruction::Gt(location, left, right)
             }
             6 => {
                 let location = self.read_location()?;
                 let address = self.eval_location(location)?;
+
+                self.maybe_write_to_logger(format_args!("jmp  {location}"), 2)?;
+
                 Instruction::Jmp(address)
             }
             7 => {
@@ -194,6 +255,9 @@ impl Machine {
                 let literal = self.eval_value(value)?;
                 let location = self.read_location()?;
                 let address = self.eval_location(location)?;
+
+                self.maybe_write_to_logger(format_args!("jt   {value} {location}"), 3)?;
+
                 Instruction::Jt(literal, address)
             }
             8 => {
@@ -201,83 +265,127 @@ impl Machine {
                 let literal = self.eval_value(value)?;
                 let location = self.read_location()?;
                 let address = self.eval_location(location)?;
+
+                self.maybe_write_to_logger(format_args!("jf   {value} {location}"), 3)?;
+
                 Instruction::Jf(literal, address)
             }
             9 => {
                 let location = self.read_location()?;
-                let left = self.read_value()?;
-                let left = self.eval_value(left)?;
-                let right = self.read_value()?;
-                let right = self.eval_value(right)?;
+                let leftv = self.read_value()?;
+                let left = self.eval_value(leftv)?;
+                let rightv = self.read_value()?;
+                let right = self.eval_value(rightv)?;
+
+                self.maybe_write_to_logger(format_args!("add  {location} {leftv} {rightv}"), 4)?;
+
                 Instruction::Add(location, left, right)
             }
             10 => {
                 let location = self.read_location()?;
-                let left = self.read_value()?;
-                let left = self.eval_value(left)?;
-                let right = self.read_value()?;
-                let right = self.eval_value(right)?;
+                let leftv = self.read_value()?;
+                let left = self.eval_value(leftv)?;
+                let rightv = self.read_value()?;
+                let right = self.eval_value(rightv)?;
+
+                self.maybe_write_to_logger(format_args!("mult {location} {leftv} {rightv}"), 4)?;
+
                 Instruction::Mult(location, left, right)
             }
             11 => {
                 let location = self.read_location()?;
-                let left = self.read_value()?;
-                let left = self.eval_value(left)?;
-                let right = self.read_value()?;
-                let right = self.eval_value(right)?;
+                let leftv = self.read_value()?;
+                let left = self.eval_value(leftv)?;
+                let rightv = self.read_value()?;
+                let right = self.eval_value(rightv)?;
+
+                self.maybe_write_to_logger(format_args!("mod  {location} {leftv} {rightv}"), 4)?;
+
                 Instruction::Mod(location, left, right)
             }
             12 => {
                 let location = self.read_location()?;
-                let left = self.read_value()?;
-                let left = self.eval_value(left)?;
-                let right = self.read_value()?;
-                let right = self.eval_value(right)?;
+                let leftv = self.read_value()?;
+                let left = self.eval_value(leftv)?;
+                let rightv = self.read_value()?;
+                let right = self.eval_value(rightv)?;
+
+                self.maybe_write_to_logger(format_args!("and  {location} {leftv} {rightv}"), 4)?;
+
                 Instruction::And(location, left, right)
             }
             13 => {
                 let location = self.read_location()?;
-                let left = self.read_value()?;
-                let left = self.eval_value(left)?;
-                let right = self.read_value()?;
-                let right = self.eval_value(right)?;
+                let leftv = self.read_value()?;
+                let left = self.eval_value(leftv)?;
+                let rightv = self.read_value()?;
+                let right = self.eval_value(rightv)?;
+
+                self.maybe_write_to_logger(format_args!("or   {location} {leftv} {rightv}"), 4)?;
+
                 Instruction::Or(location, left, right)
             }
             14 => {
                 let location = self.read_location()?;
-                let operand = self.read_value()?;
-                let operand = self.eval_value(operand)?;
+                let operandv = self.read_value()?;
+                let operand = self.eval_value(operandv)?;
+
+                self.maybe_write_to_logger(format_args!("not  {location} {operandv}"), 3)?;
+
                 Instruction::Not(location, operand)
             }
             15 => {
                 let dest = self.read_location()?;
-                let src = self.read_location()?;
-                let src = self.eval_location(src)?;
+                let srcl = self.read_location()?;
+                let src = self.eval_location(srcl)?;
+
+                self.maybe_write_to_logger(format_args!("rmem {dest} {srcl}"), 3)?;
+
                 Instruction::Rmem(dest, src)
             }
             16 => {
-                let dest = self.read_location()?;
-                let dest = self.eval_location(dest)?;
-                let src = self.read_value()?;
-                let src = self.eval_value(src)?;
+                let destl = self.read_location()?;
+                let dest = self.eval_location(destl)?;
+                let srcv = self.read_value()?;
+                let src = self.eval_value(srcv)?;
+
+                self.maybe_write_to_logger(format_args!("wmem {destl} {srcv}"), 3)?;
+
                 Instruction::Wmem(dest, src)
             }
             17 => {
                 let location = self.read_location()?;
                 let address = self.eval_location(location)?;
+
+                self.maybe_write_to_logger(format_args!("call {location}"), 2)?;
+
                 Instruction::Call(address)
             }
-            18 => Instruction::Ret,
+            18 => {
+                self.maybe_write_to_logger(format_args!("ret "), 1)?;
+
+                Instruction::Ret
+            }
             19 => {
                 let value = self.read_value()?;
                 let literal = self.eval_value(value)?;
+
+                self.maybe_write_to_logger(format_args!("out  {value}"), 2)?;
+
                 Instruction::Out(literal)
             }
             20 => {
                 let dest = self.read_location()?;
+
+                self.maybe_write_to_logger(format_args!("in   {dest}"), 2)?;
+
                 Instruction::In(dest)
             }
-            21 => Instruction::Noop,
+            21 => {
+                self.maybe_write_to_logger(format_args!("noop"), 1)?;
+
+                Instruction::Noop
+            }
             _ => return Err(color_eyre::eyre::eyre!("got weird opcode: {opcode}")),
         })
     }
@@ -324,7 +432,7 @@ impl Machine {
                     Ok(None)
                 } else if line.starts_with("dumpregs") {
                     for (register, val) in self.registers.iter().copied().enumerate() {
-                        println!("Register {register} = 0x{val:x}");
+                        println!("Register {register} = {val:#x}");
                     }
 
                     Ok(None)
@@ -334,7 +442,7 @@ impl Machine {
                         .trim()
                         .parse::<usize>()
                         .wrap_err("parse register into usize")?;
-                    println!("Register {reg} = 0x{:x}", self.registers[reg]);
+                    println!("Register {reg} = {:#x}", self.registers[reg]);
 
                     Ok(None)
                 } else if line.starts_with("setreg") {
@@ -353,6 +461,17 @@ impl Machine {
                         .parse::<u16>()
                         .wrap_err("parse value into u16")?;
                     self.registers[reg] = val;
+
+                    Ok(None)
+                } else if line.starts_with("logfile") {
+                    let (_, filename) = line.split_once(' ').wrap_err("get filename")?;
+                    let filename = filename.trim();
+                    let file = File::create(filename).wrap_err("create logfile")?;
+                    self.logger = Some(file);
+
+                    Ok(None)
+                } else if line.starts_with("nolog") {
+                    self.logger = None;
 
                     Ok(None)
                 } else {
@@ -389,6 +508,19 @@ impl Machine {
             Location::Address(address) => self.mem[address.0] = raw,
             Location::Register(register) => self.registers[register.0] = raw,
         }
+    }
+
+    fn maybe_write_to_logger(
+        &mut self,
+        args: std::fmt::Arguments,
+        index_offset: usize,
+    ) -> color_eyre::Result<()> {
+        if let Some(ref mut logger) = self.logger {
+            writeln!(logger, "{:#06x}    {}", self.index - index_offset, args)
+                .wrap_err("write to logger")?;
+        }
+
+        Ok(())
     }
 
     fn write_stdout(&mut self, raw: u16) {
