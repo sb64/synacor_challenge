@@ -295,16 +295,10 @@ impl Machine {
                     return Err(color_eyre::eyre::eyre!("stdin has reached EOF"));
                 }
 
-                let line_without_eol = if let Some(no_eol) = line.strip_suffix("\r\n") {
-                    no_eol
-                } else if let Some(no_eol) = line.strip_suffix('\n') {
-                    no_eol
-                } else {
-                    &line
-                };
-
-                self.stdin
-                    .extend(line_without_eol.chars().map(|ch| ch as u8));
+                self.stdin.extend(
+                    line.chars()
+                        .filter_map(|ch| (ch != '\r').then_some(ch as u8)),
+                );
                 self.read_stdin()
             }
         }
@@ -335,7 +329,7 @@ impl Machine {
         }
     }
 
-    fn write_stdin(&mut self, raw: u16) {
+    fn write_stdout(&mut self, raw: u16) {
         print!("{}", raw as u8 as char)
     }
 
@@ -408,7 +402,7 @@ impl Machine {
                     let dest = self.pop_stack()? as usize;
                     self.index = dest
                 }
-                Instruction::Out(literal) => self.write_stdin(literal.0),
+                Instruction::Out(literal) => self.write_stdout(literal.0),
                 Instruction::In(location) => {
                     let raw = self.read_stdin()?;
                     self.write_to_location(location, raw)
