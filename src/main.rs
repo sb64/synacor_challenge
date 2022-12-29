@@ -362,7 +362,7 @@ impl Machine {
                     self.write_to_location(dest, sum)
                 }
                 Instruction::Mult(dest, left, right) => {
-                    let product = (left.0 * right.0) % 32768;
+                    let product = ((left.0 as u32 * right.0 as u32) % 32768) as u16;
                     self.write_to_location(dest, product)
                 }
                 Instruction::Mod(dest, left, right) => {
