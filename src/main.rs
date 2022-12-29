@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use color_eyre::eyre::{Context, ContextCompat};
 
 #[derive(Debug, Clone, Copy)]
@@ -30,11 +32,11 @@ enum Instruction {
 struct Register(usize);
 
 impl Register {
-    fn new(register: u16) -> Self {
+    fn new(register: u16) -> color_eyre::Result<Self> {
         if (32768..=32775).contains(&register) {
-            Self(register as usize - 32768)
+            Ok(Self(register as usize - 32768))
         } else {
-            panic!("got weird register: {register}")
+            Err(color_eyre::eyre::eyre!("got weird register: {register}"))
         }
     }
 }
@@ -46,11 +48,11 @@ enum Value {
 }
 
 impl Value {
-    fn new(value: u16) -> Self {
+    fn new(value: u16) -> color_eyre::Result<Self> {
         match value {
-            0..=32767 => Value::Literal(Literal(value)),
-            32768..=32775 => Value::LiteralAtRegister(Register(value as usize - 32768)),
-            _ => panic!("got weird value: {value}"),
+            0..=32767 => Ok(Value::Literal(Literal(value))),
+            32768..=32775 => Ok(Value::LiteralAtRegister(Register(value as usize - 32768))),
+            _ => Err(color_eyre::eyre::eyre!("got weird value: {value}")),
         }
     }
 }
@@ -59,11 +61,11 @@ impl Value {
 struct Literal(u16);
 
 impl Literal {
-    fn new(literal: u16) -> Self {
+    fn new(literal: u16) -> color_eyre::Result<Self> {
         if (0..=32767).contains(&literal) {
-            Self(literal)
+            Ok(Self(literal))
         } else {
-            panic!("got weird literal: {literal}")
+            Err(color_eyre::eyre::eyre!("got weird literal: {literal}"))
         }
     }
 }
@@ -75,11 +77,11 @@ enum Location {
 }
 
 impl Location {
-    fn new(location: u16) -> Self {
+    fn new(location: u16) -> color_eyre::Result<Self> {
         match location {
-            0..=32767 => Location::Address(Address(location as usize)),
-            32768..=32775 => Location::Register(Register(location as usize - 32768)),
-            _ => panic!("got weird location: {location}"),
+            0..=32767 => Ok(Location::Address(Address(location as usize))),
+            32768..=32775 => Ok(Location::Register(Register(location as usize - 32768))),
+            _ => Err(color_eyre::eyre::eyre!("got weird location: {location}")),
         }
     }
 }
@@ -88,11 +90,11 @@ impl Location {
 struct Address(usize);
 
 impl Address {
-    fn new(address: u16) -> Self {
+    fn new(address: u16) -> color_eyre::Result<Self> {
         if (0..=32767).contains(&address) {
-            Self(address as usize)
+            Ok(Self(address as usize))
         } else {
-            panic!("got weird address: {address}")
+            Err(color_eyre::eyre::eyre!("got weird address: {address}"))
         }
     }
 }
@@ -103,7 +105,7 @@ struct Machine {
     registers: Box<[u16; 8]>,
     stack: Vec<u16>,
     index: usize,
-    stdin: Vec<u16>,
+    stdin: VecDeque<u8>,
 }
 
 impl Machine {
@@ -122,7 +124,7 @@ impl Machine {
             registers: Box::new([0; 8]),
             stack: Vec::new(),
             index: 0,
-            stdin: Vec::new(),
+            stdin: VecDeque::new(),
         }
     }
 
@@ -132,174 +134,157 @@ impl Machine {
         mem
     }
 
-    fn read_register(&mut self) -> Register {
+    fn read_register(&mut self) -> color_eyre::Result<Register> {
         let register = self.read_mem();
         Register::new(register)
     }
 
-    fn read_value(&mut self) -> Value {
+    fn read_value(&mut self) -> color_eyre::Result<Value> {
         let value = self.read_mem();
         Value::new(value)
     }
 
-    fn read_location(&mut self) -> Location {
+    fn read_location(&mut self) -> color_eyre::Result<Location> {
         let location = self.read_mem();
         Location::new(location)
     }
 
-    fn read_instruction(&mut self) -> Instruction {
+    fn read_instruction(&mut self) -> color_eyre::Result<Instruction> {
         let opcode = self.read_mem();
-        match opcode {
+        Ok(match opcode {
             0 => Instruction::Halt,
             1 => {
-                let register = self.read_register();
-                let value = self.read_value();
-                let literal = self.eval_value(value);
+                let register = self.read_register()?;
+                let value = self.read_value()?;
+                let literal = self.eval_value(value)?;
                 Instruction::Set(register, literal)
             }
             2 => {
-                let value = self.read_value();
-                let literal = self.eval_value(value);
+                let value = self.read_value()?;
+                let literal = self.eval_value(value)?;
                 Instruction::Push(literal)
             }
             3 => {
-                let location = self.read_location();
+                let location = self.read_location()?;
                 Instruction::Pop(location)
             }
             4 => {
-                let location = self.read_location();
-                let left = self.read_value();
-                let left = self.eval_value(left);
-                let right = self.read_value();
-                let right = self.eval_value(right);
+                let location = self.read_location()?;
+                let left = self.read_value()?;
+                let left = self.eval_value(left)?;
+                let right = self.read_value()?;
+                let right = self.eval_value(right)?;
                 Instruction::Eq(location, left, right)
             }
             5 => {
-                let location = self.read_location();
-                let left = self.read_value();
-                let left = self.eval_value(left);
-                let right = self.read_value();
-                let right = self.eval_value(right);
+                let location = self.read_location()?;
+                let left = self.read_value()?;
+                let left = self.eval_value(left)?;
+                let right = self.read_value()?;
+                let right = self.eval_value(right)?;
                 Instruction::Gt(location, left, right)
             }
             6 => {
-                let location = self.read_location();
-                let address = self.eval_location(location);
+                let location = self.read_location()?;
+                let address = self.eval_location(location)?;
                 Instruction::Jmp(address)
             }
             7 => {
-                let value = self.read_value();
-                let literal = self.eval_value(value);
-                let location = self.read_location();
-                let address = self.eval_location(location);
+                let value = self.read_value()?;
+                let literal = self.eval_value(value)?;
+                let location = self.read_location()?;
+                let address = self.eval_location(location)?;
                 Instruction::Jt(literal, address)
             }
             8 => {
-                let value = self.read_value();
-                let literal = self.eval_value(value);
-                let location = self.read_location();
-                let address = self.eval_location(location);
+                let value = self.read_value()?;
+                let literal = self.eval_value(value)?;
+                let location = self.read_location()?;
+                let address = self.eval_location(location)?;
                 Instruction::Jf(literal, address)
             }
             9 => {
-                let location = self.read_location();
-                let left = self.read_value();
-                let left = self.eval_value(left);
-                let right = self.read_value();
-                let right = self.eval_value(right);
+                let location = self.read_location()?;
+                let left = self.read_value()?;
+                let left = self.eval_value(left)?;
+                let right = self.read_value()?;
+                let right = self.eval_value(right)?;
                 Instruction::Add(location, left, right)
             }
             10 => {
-                let location = self.read_location();
-                let left = self.read_value();
-                let left = self.eval_value(left);
-                let right = self.read_value();
-                let right = self.eval_value(right);
+                let location = self.read_location()?;
+                let left = self.read_value()?;
+                let left = self.eval_value(left)?;
+                let right = self.read_value()?;
+                let right = self.eval_value(right)?;
                 Instruction::Mult(location, left, right)
             }
             11 => {
-                let location = self.read_location();
-                let left = self.read_value();
-                let left = self.eval_value(left);
-                let right = self.read_value();
-                let right = self.eval_value(right);
+                let location = self.read_location()?;
+                let left = self.read_value()?;
+                let left = self.eval_value(left)?;
+                let right = self.read_value()?;
+                let right = self.eval_value(right)?;
                 Instruction::Mod(location, left, right)
             }
             12 => {
-                let location = self.read_location();
-                let left = self.read_value();
-                let left = self.eval_value(left);
-                let right = self.read_value();
-                let right = self.eval_value(right);
+                let location = self.read_location()?;
+                let left = self.read_value()?;
+                let left = self.eval_value(left)?;
+                let right = self.read_value()?;
+                let right = self.eval_value(right)?;
                 Instruction::And(location, left, right)
             }
             13 => {
-                let location = self.read_location();
-                let left = self.read_value();
-                let left = self.eval_value(left);
-                let right = self.read_value();
-                let right = self.eval_value(right);
+                let location = self.read_location()?;
+                let left = self.read_value()?;
+                let left = self.eval_value(left)?;
+                let right = self.read_value()?;
+                let right = self.eval_value(right)?;
                 Instruction::Or(location, left, right)
             }
             14 => {
-                let location = self.read_location();
-                let operand = self.read_value();
-                let operand = self.eval_value(operand);
+                let location = self.read_location()?;
+                let operand = self.read_value()?;
+                let operand = self.eval_value(operand)?;
                 Instruction::Not(location, operand)
             }
             15 => {
-                let dest = self.read_location();
-                let src = self.read_location();
-                let src = self.eval_location(src);
+                let dest = self.read_location()?;
+                let src = self.read_location()?;
+                let src = self.eval_location(src)?;
                 Instruction::Rmem(dest, src)
             }
             16 => {
-                let dest = self.read_location();
-                let dest = self.eval_location(dest);
-                let src = self.read_location();
+                let dest = self.read_location()?;
+                let dest = self.eval_location(dest)?;
+                let src = self.read_location()?;
                 Instruction::Wmem(dest, src)
             }
             17 => {
-                let location = self.read_location();
-                let address = self.eval_location(location);
+                let location = self.read_location()?;
+                let address = self.eval_location(location)?;
                 Instruction::Call(address)
             }
             18 => Instruction::Ret,
             19 => {
-                let value = self.read_value();
-                let literal = self.eval_value(value);
+                let value = self.read_value()?;
+                let literal = self.eval_value(value)?;
                 Instruction::Out(literal)
             }
             20 => {
-                let dest = self.read_location();
+                let dest = self.read_location()?;
                 Instruction::In(dest)
             }
             21 => Instruction::Noop,
-            _ => panic!("got weird opcode: {opcode}"),
-        }
+            _ => return Err(color_eyre::eyre::eyre!("got weird opcode: {opcode}")),
+        })
     }
 
-    fn read_stdin(&mut self) -> u16 {
-        match self.stdin.pop() {
-            Some(raw) => raw,
-            None => {
-                let mut line = String::new();
-                let num_bytes_read = std::io::stdin()
-                    .read_line(&mut line)
-                    .expect("can't read from stdin");
-                if num_bytes_read == 0 {
-                    panic!("stdin has reached EOF")
-                }
-                let no_eol = if let Some(no_eol) = line.strip_suffix("\r\n") {
-                    no_eol
-                } else if let Some(no_eol) = line.strip_suffix('\n') {
-                    no_eol
-                } else {
-                    &line
-                };
-                self.stdin = no_eol.chars().rev().map(|ch| ch as u16).collect();
-                self.read_stdin()
-            }
+    fn read_stdin(&mut self) -> color_eyre::Result<u16> {
+        match self.stdin.pop_front() {
+            Some(raw) => Ok(raw as u16),
+            None => Err(color_eyre::eyre::eyre!("read from stdin")),
         }
     }
 
@@ -307,16 +292,16 @@ impl Machine {
         self.registers[register.0]
     }
 
-    fn eval_location(&self, location: Location) -> Address {
+    fn eval_location(&self, location: Location) -> color_eyre::Result<Address> {
         match location {
-            Location::Address(address) => address,
+            Location::Address(address) => Ok(address),
             Location::Register(register) => Address::new(self.eval_register(register)),
         }
     }
 
-    fn eval_value(&self, value: Value) -> Literal {
+    fn eval_value(&self, value: Value) -> color_eyre::Result<Literal> {
         match value {
-            Value::Literal(literal) => literal,
+            Value::Literal(literal) => Ok(literal),
             Value::LiteralAtRegister(register) => Literal::new(self.eval_register(register)),
         }
     }
@@ -335,13 +320,19 @@ impl Machine {
         }
     }
 
+    fn write_stdin(&mut self, raw: u16) {
+        let to_write = raw as u8;
+        self.stdin.push_back(to_write);
+        print!("{}", to_write as char)
+    }
+
     fn pop_stack(&mut self) -> color_eyre::Result<u16> {
         self.stack.pop().wrap_err("pop stack")
     }
 
     fn run(&mut self) -> color_eyre::Result<()> {
         loop {
-            match self.read_instruction() {
+            match self.read_instruction()? {
                 Instruction::Halt => return Ok(()),
                 Instruction::Set(register, literal) => self.registers[register.0] = literal.0,
                 Instruction::Push(literal) => self.stack.push(literal.0),
@@ -406,9 +397,9 @@ impl Machine {
                     let dest = self.pop_stack()? as usize;
                     self.index = dest
                 }
-                Instruction::Out(literal) => print!("{}", literal.0 as u8 as char),
+                Instruction::Out(literal) => self.write_stdin(literal.0),
                 Instruction::In(location) => {
-                    let raw = self.read_stdin();
+                    let raw = self.read_stdin()?;
                     self.write_to_location(location, raw)
                 }
                 Instruction::Noop => {}
@@ -418,6 +409,8 @@ impl Machine {
 }
 
 fn main() -> color_eyre::Result<()> {
+    color_eyre::install()?;
+
     let program = std::fs::read("challenge.bin").wrap_err("read input file")?;
     let mut machine = Machine::new(&program);
     machine.run()?;
