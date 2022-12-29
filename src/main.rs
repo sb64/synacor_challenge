@@ -282,6 +282,13 @@ impl Machine {
         })
     }
 
+    fn redo_stdin(&mut self) {
+        self.index -= 2;
+        for ch in b"look\n".iter().rev().copied() {
+            self.stdin.push_front(ch);
+        }
+    }
+
     fn read_stdin(&mut self) -> color_eyre::Result<Option<u16>> {
         match self.stdin.pop_front() {
             Some(raw) => Ok(Some(raw as u16)),
@@ -316,7 +323,41 @@ impl Machine {
                     for ch in b"look\n".iter().rev().copied() {
                         self.stdin.push_front(ch);
                     }
-                    return Ok(None);
+                    Ok(None)
+                } else if line.starts_with("dumpregs") {
+                    for (register, val) in self.registers.iter().copied().enumerate() {
+                        println!("Register {register} = 0x{val:x}");
+                    }
+                    self.redo_stdin();
+                    Ok(None)
+                } else if line.starts_with("dumpreg") {
+                    let (_, reg) = line.split_once(' ').wrap_err("get register")?;
+                    let reg = reg
+                        .trim()
+                        .parse::<usize>()
+                        .wrap_err("parse register into usize")?;
+                    println!("Register {reg} = 0x{:x}", self.registers[reg]);
+                    self.redo_stdin();
+
+                    Ok(None)
+                } else if line.starts_with("setreg") {
+                    let mut iter = line.trim().splitn(3, ' ');
+                    let _ = iter
+                        .next()
+                        .ok_or_else(|| color_eyre::eyre::eyre!("something sketchy's happening"))?;
+                    let reg = iter
+                        .next()
+                        .ok_or_else(|| color_eyre::eyre::eyre!("get register"))?
+                        .parse::<usize>()
+                        .wrap_err("parse register into usize")?;
+                    let val = iter
+                        .next()
+                        .ok_or_else(|| color_eyre::eyre::eyre!("get value"))?
+                        .parse::<u16>()
+                        .wrap_err("parse value into u16")?;
+                    self.registers[reg] = val;
+                    self.redo_stdin();
+                    Ok(None)
                 } else {
                     self.stdin.extend(
                         line.chars()
