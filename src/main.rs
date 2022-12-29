@@ -20,7 +20,7 @@ enum Instruction {
     Or(Location, Literal, Literal),
     Not(Location, Literal),
     Rmem(Location, Address),
-    Wmem(Address, Location),
+    Wmem(Address, Literal),
     Call(Address),
     Ret,
     Out(Literal),
@@ -258,7 +258,8 @@ impl Machine {
             16 => {
                 let dest = self.read_location()?;
                 let dest = self.eval_location(dest)?;
-                let src = self.read_location()?;
+                let src = self.read_value()?;
+                let src = self.eval_value(src)?;
                 Instruction::Wmem(dest, src)
             }
             17 => {
@@ -303,13 +304,6 @@ impl Machine {
         match value {
             Value::Literal(literal) => Ok(literal),
             Value::LiteralAtRegister(register) => Literal::new(self.eval_register(register)),
-        }
-    }
-
-    fn read_from_location(&self, location: Location) -> u16 {
-        match location {
-            Location::Address(address) => self.mem[address.0],
-            Location::Register(register) => self.registers[register.0],
         }
     }
 
@@ -386,10 +380,7 @@ impl Machine {
                     let mem = self.mem[src.0];
                     self.write_to_location(dest, mem)
                 }
-                Instruction::Wmem(dest, src) => {
-                    let mem = self.read_from_location(src);
-                    self.mem[dest.0] = mem
-                }
+                Instruction::Wmem(dest, src) => self.mem[dest.0] = src.0,
                 Instruction::Call(address) => {
                     self.stack.push(self.index as u16);
                     self.index = address.0
