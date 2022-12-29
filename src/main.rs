@@ -379,6 +379,7 @@ impl Machine {
                 }
                 Instruction::Not(dest, operand) => {
                     let noted = !operand.0;
+                    let noted = noted & 0x7fff;
                     self.write_to_location(dest, noted)
                 }
                 Instruction::Rmem(dest, src) => {
