@@ -305,12 +305,12 @@ impl Machine {
                 if line.starts_with("savestate") {
                     let (_, filename) = line.split_once(' ').wrap_err("get filename")?;
                     let filename = filename.trim();
-                    self.index -= 2;
                     std::fs::write(
                         filename,
                         serde_json::to_string(self).wrap_err("serialize state")?,
                     )
                     .wrap_err("save state")?;
+
                     std::process::exit(0);
                 } else if line.starts_with("loadstate") {
                     let (_, filename) = line.split_once(' ').wrap_err("get filename")?;
@@ -320,15 +320,13 @@ impl Machine {
                     )
                     .wrap_err("deserialize state")?;
                     *self = deserialized;
-                    for ch in b"look\n".iter().rev().copied() {
-                        self.stdin.push_front(ch);
-                    }
+
                     Ok(None)
                 } else if line.starts_with("dumpregs") {
                     for (register, val) in self.registers.iter().copied().enumerate() {
                         println!("Register {register} = 0x{val:x}");
                     }
-                    self.redo_stdin();
+
                     Ok(None)
                 } else if line.starts_with("dumpreg") {
                     let (_, reg) = line.split_once(' ').wrap_err("get register")?;
@@ -337,7 +335,6 @@ impl Machine {
                         .parse::<usize>()
                         .wrap_err("parse register into usize")?;
                     println!("Register {reg} = 0x{:x}", self.registers[reg]);
-                    self.redo_stdin();
 
                     Ok(None)
                 } else if line.starts_with("setreg") {
@@ -356,7 +353,7 @@ impl Machine {
                         .parse::<u16>()
                         .wrap_err("parse value into u16")?;
                     self.registers[reg] = val;
-                    self.redo_stdin();
+
                     Ok(None)
                 } else {
                     self.stdin.extend(
@@ -472,7 +469,7 @@ impl Machine {
                     let raw = self.read_stdin()?;
                     match raw {
                         Some(raw) => self.write_to_location(location, raw),
-                        None => continue,
+                        None => self.redo_stdin(),
                     }
                 }
                 Instruction::Noop => {}
