@@ -285,7 +285,28 @@ impl Machine {
     fn read_stdin(&mut self) -> color_eyre::Result<u16> {
         match self.stdin.pop_front() {
             Some(raw) => Ok(raw as u16),
-            None => Err(color_eyre::eyre::eyre!("read from stdin")),
+            None => {
+                let mut line = String::new();
+
+                let bytes_read = std::io::stdin()
+                    .read_line(&mut line)
+                    .wrap_err("read from stdin")?;
+                if bytes_read == 0 {
+                    return Err(color_eyre::eyre::eyre!("stdin has reached EOF"));
+                }
+
+                let line_without_eol = if let Some(no_eol) = line.strip_suffix("\r\n") {
+                    no_eol
+                } else if let Some(no_eol) = line.strip_suffix('\n') {
+                    no_eol
+                } else {
+                    &line
+                };
+
+                self.stdin
+                    .extend(line_without_eol.chars().map(|ch| ch as u8));
+                self.read_stdin()
+            }
         }
     }
 
@@ -315,9 +336,7 @@ impl Machine {
     }
 
     fn write_stdin(&mut self, raw: u16) {
-        let to_write = raw as u8;
-        self.stdin.push_back(to_write);
-        print!("{}", to_write as char)
+        print!("{}", raw as u8 as char)
     }
 
     fn pop_stack(&mut self) -> color_eyre::Result<u16> {
