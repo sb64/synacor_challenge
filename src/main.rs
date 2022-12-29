@@ -47,19 +47,24 @@ struct Address(usize);
 
 #[derive(Debug, Clone)]
 struct Machine {
-    mem: Box<[u16; 1 << 15]>,
+    mem: Vec<u16>,
     registers: Box<[u16; 8]>,
     stack: Vec<u16>,
 }
 
 impl Machine {
     fn new(program: &[u8]) -> Self {
-        let mut iter = program
+        let mut mem = vec![0; 1 << 15];
+        for (i, val) in program
             .chunks_exact(2)
-            .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]));
+            .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
+            .enumerate()
+        {
+            mem[i] = val;
+        }
 
         Self {
-            mem: Box::new(std::array::from_fn(|_| iter.next().unwrap_or(0))),
+            mem,
             registers: Box::new([0; 8]),
             stack: Vec::new(),
         }
