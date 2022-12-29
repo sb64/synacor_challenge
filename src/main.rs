@@ -193,6 +193,7 @@ impl Machine {
             println!("hacking...");
             self.mem[0x178b] = 18;
             self.registers[0] = 0x6;
+            self.registers[7] = 0x6486;
         }
         let opcode = self.read_mem();
         Ok(match opcode {
@@ -624,3 +625,6 @@ fn main() -> color_eyre::Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod routine;
