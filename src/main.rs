@@ -189,6 +189,11 @@ impl Machine {
     }
 
     fn read_instruction(&mut self) -> color_eyre::Result<Instruction> {
+        if self.index == 0x178b && self.registers[7] == 1 {
+            println!("hacking...");
+            self.mem[0x178b] = 18;
+            self.registers[0] = 0x6;
+        }
         let opcode = self.read_mem();
         Ok(match opcode {
             0 => {

@@ -1,0 +1,29 @@
+--- before the function call ---
+0x156b    set  r0 0x4
+0x156e    set  r1 0x1
+0x1571    call 0x178b
+
+--- after the function call ---
+0x1573    eq   r1 r0 0x6
+0x1577    jf   r1 0x15cb
+
+// but you can't just set r0 to 6, because the resulting code is wrong
+// you have to actually reverse engineer the routine
+
+--- the actual routine ---
+0x178b    jt   r0 0x1793
+0x178e    add  r0 r1 0x1
+0x1792    ret
+0x1793    jt   r1 0x17a0
+0x1796    add  r0 r0 0x7fff
+0x179a    set  r1 r7
+0x179d    call 0x178b
+0x179f    ret
+0x17a0    push r0
+0x17a2    add  r1 r1 0x7fff
+0x17a6    call 0x178b
+0x17a8    set  r1 r0
+0x17ab    pop  r0
+0x17ad    add  r0 r0 0x7fff
+0x17b1    call 0x178b
+0x17b3    ret
