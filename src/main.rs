@@ -628,3 +628,6 @@ fn main() -> color_eyre::Result<()> {
 
 #[cfg(test)]
 mod routine;
+
+#[cfg(test)]
+mod grid;
